@@ -58,7 +58,8 @@ z_dimension=config['z_dimension']
 
 img_transform = transforms.Compose([
 	transforms.ToTensor(),
-	transforms.Normalize([0.5], [0.5])
+	# transforms.Normalize([0.5], [0.5])    [0.485,0.456,0.406]、image_std=[0.229,0.224,0.225]
+	transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
 
@@ -66,7 +67,7 @@ FaceDataset = datasets.ImageFolder('./data', transform=img_transform) # 数据�
 dataloader = torch.utils.data.DataLoader(FaceDataset,
 									 batch_size=batch_size, # 批量大小
 									 shuffle=False, # 不要乱序
-									 num_workers=8 # 多进程
+									 num_workers=4 # 多进程
 									 )
 label = list(data.values())
 num_samples = len(label)
@@ -88,7 +89,7 @@ if torch.cuda.is_available():
 	D = D.cuda()
 	G = G.cuda()
 
-device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # Binary cross entropy loss and optimizer
 criterion = nn.BCELoss()
 d_optimizer = torch.optim.Adam(D.parameters(), lr=0.0002)
