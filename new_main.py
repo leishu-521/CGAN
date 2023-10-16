@@ -12,6 +12,11 @@ import cGAN_Model
 from Onehot_embedding import Voc
 import yaml
 import random
+import gc
+def report_gpu():
+   print(torch.cuda.list_gpu_processes())
+   gc.collect()
+   torch.cuda.empty_cache()
 
 def to_img(x):
 	out = 0.5 * (x + 1)
@@ -67,7 +72,7 @@ FaceDataset = datasets.ImageFolder('./data', transform=img_transform) # 数据�
 dataloader = torch.utils.data.DataLoader(FaceDataset,
 									 batch_size=batch_size, # 批量大小
 									 shuffle=False, # 不要乱序
-									 num_workers=4 # 多进程
+									 num_workers=1 # 多进程
 									 )
 label = list(data.values())
 num_samples = len(label)
@@ -98,10 +103,11 @@ g_optimizer = torch.optim.Adam(G.parameters(), lr=0.0002)
 
 
 
-
+iters = 0
 for epoch in range(num_epoch):
-	for i, (img,_) in enumerate(dataloader):
 
+	for i, (img,_) in enumerate(dataloader):
+		iters += 1
 		if (i+1)*batch_size < num_samples:
 			batch_vectors=torch.cat((label_vectors[i*batch_size:(i+1)*batch_size]),0)
 			batch_vectors=batch_vectors.view(-1,32).float()
@@ -109,31 +115,33 @@ for epoch in range(num_epoch):
 			batch_vectors=torch.cat((label_vectors[i*batch_size:-1]),0)
 			batch_vectors=batch_vectors.view(-1,32).float()
 
+		#  清空缓存，小技巧
 		if torch.cuda.is_available():
 			torch.cuda.empty_cache()
+		# report_gpu()
 
 		num_img = img.size(0)
 		#train discriminator
 		# compute loss of real_matched_img
-		img = img.view(num_img,3,96,96)
+		img = img.view(num_img,3,96,96)# 这行代码看似多余，其实是为了避免最后一个批次没有batchsize大小
 		real_img = Variable(img).to(device)
-		real_label = Variable(torch.ones(num_img)).to(device)
-		fake_label = Variable(torch.zeros(num_img)).to(device)
+		real_label = Variable(torch.ones([num_img, 1])).to(device)# 真实图像的打标签为1
+		fake_label = Variable(torch.zeros([num_img,1])).to(device)# 生成的图片打标签为0
 		batch_vectors = Variable(batch_vectors).to(device)
-		matched_real_out = D(real_img,batch_vectors)
+		matched_real_out = D(real_img,batch_vectors) # 判别器最后一层是sigmoid函数，输出0-1的概率值，表示有多大概率为真实图片
 		d_loss_matched_real = criterion(matched_real_out, real_label)
 		matched_real_scores = matched_real_out  # closer to 1 means better
 
 		# compute loss of fake_matched_img
 		z = Variable(torch.randn(num_img, z_dimension)).to(device)
 		z = torch.cat((z,batch_vectors),axis=1).to(device)
-		fake_img = G(z)
+		fake_img = G(z).detach()
 		matched_fake_out = D(fake_img,batch_vectors)
 		d_loss_matched_fake = criterion(matched_fake_out, fake_label)
 		matched_fake_out_scores = matched_fake_out  # closer to 0 means better
 
-		# compute loss of real_unmatched_img
 
+		# # compute loss of real_unmatched_img
 		rand_label_vectors=random.sample(label_vectors,num_img)
 		rand_batch_vectors=torch.cat((rand_label_vectors[:]),0)
 		rand_batch_vectors=rand_batch_vectors.view(-1,32).float().to(device)
@@ -141,13 +149,14 @@ for epoch in range(num_epoch):
 
 		z = Variable(torch.randn(num_img, z_dimension)).to(device)
 		z = torch.cat((z,rand_batch_vectors),axis=1).to(device)
-		fake_img = G(z)
+		fake_img = G(z).detach()
 		unmatched_real_out = D(fake_img,batch_vectors)
 		d_loss_unmatched_real = criterion(unmatched_real_out, fake_label)
 		unmatched_real_out_scores = unmatched_real_out  # closer to 0 means better
 
 		# bp and optimize
 		d_loss = d_loss_matched_real + d_loss_matched_fake + d_loss_unmatched_real
+		# d_loss = d_loss_matched_real + d_loss_matched_fake
 		d_optimizer.zero_grad()
 		d_loss.backward()
 		d_optimizer.step()
@@ -168,11 +177,12 @@ for epoch in range(num_epoch):
 		g_loss.backward()
 		g_optimizer.step()
 
-
-		print('Epoch [{}/{}], Batch {},d_loss: {:.6f}, g_loss: {:.6f} '
-				  .format(
-				epoch, num_epoch,i,d_loss.data, g_loss.data,
-				))
+		if iters % 50 == 0:
+			print('Epoch [{}/{}], Batch {},d_loss: {:.6f}, g_loss: {:.6f} '
+					  .format(
+					epoch, num_epoch,i,d_loss.data, g_loss.data,
+					))
+			report_gpu()
 		if epoch == 0:
 			real_images = to_img(real_img.cpu().data)
 			save_image(real_images, './img/real_images.png')
